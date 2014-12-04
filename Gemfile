@@ -1,0 +1,19 @@
+source "http://rubygems.org"
+
+# We test both with AR 4 and AR3, see gemfiles/ for more.
+# To run specs against specific versions of dependencies, use
+#
+#   $ BUNDLE_GEMFILE=gemfiles/Gemfile.rails-4.1.x bundle exec rake
+#
+# etc.
+gem 'activerecord', "> 3.0"
+
+# Add dependencies to develop your gem here.
+# Include everything needed to run rake, tests, features, etc.
+group :development do
+  gem 'sqlite3'
+  gem "rspec", "~> 2.4"
+  gem "rdoc", "~> 3.12"
+  gem "bundler", "~> 1.0"
+  gem "jeweler", "1.8.4" # The last without Nokogiri
+end
