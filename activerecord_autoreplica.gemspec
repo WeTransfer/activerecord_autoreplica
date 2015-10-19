@@ -46,14 +46,14 @@ Gem::Specification.new do |s|
       s.add_development_dependency(%q<rspec>, ["~> 2.4"])
       s.add_development_dependency(%q<rdoc>, ["~> 3.12"])
       s.add_development_dependency(%q<bundler>, ["~> 1.0"])
-      s.add_development_dependency(%q<jeweler>, ["= 1.8.4"])
+      s.add_development_dependency(%q<jeweler>, [">= 0"])
     else
       s.add_dependency(%q<activerecord>, ["> 3.0"])
       s.add_dependency(%q<sqlite3>, [">= 0"])
       s.add_dependency(%q<rspec>, ["~> 2.4"])
       s.add_dependency(%q<rdoc>, ["~> 3.12"])
       s.add_dependency(%q<bundler>, ["~> 1.0"])
-      s.add_dependency(%q<jeweler>, ["= 1.8.4"])
+      s.add_dependency(%q<jeweler>, [">= 0"])
     end
   else
     s.add_dependency(%q<activerecord>, ["> 3.0"])
@@ -61,7 +61,7 @@ Gem::Specification.new do |s|
     s.add_dependency(%q<rspec>, ["~> 2.4"])
     s.add_dependency(%q<rdoc>, ["~> 3.12"])
     s.add_dependency(%q<bundler>, ["~> 1.0"])
-    s.add_dependency(%q<jeweler>, ["= 1.8.4"])
+    s.add_dependency(%q<jeweler>, [">= 0"])
   end
 end
 
