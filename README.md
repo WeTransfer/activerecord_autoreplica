@@ -1,5 +1,7 @@
 # activerecord_autoreplica
 
+[![Build Status](https://travis-ci.org/WeTransfer/activerecord_autoreplica.svg)](https://travis-ci.org/WeTransfer/activerecord_autoreplica)
+
 An automatic ActiveRecord connection multiplexer, and is a reimplementation of / greatly inspired by
 the [makara gem](https://github.com/taskrabbit/makara)
 
@@ -85,6 +87,6 @@ The gem version is specified in the Rakefile.
 
 ### Copyright
 
-Copyright (c) 2014 Julik Tarkhanov for WeTransfer. See LICENSE.txt for
+Copyright (c) 2014 WeTransfer. See LICENSE.txt for
 further details.
 
