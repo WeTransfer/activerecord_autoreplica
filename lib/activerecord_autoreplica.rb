@@ -162,10 +162,10 @@ module AutoReplica
     end
   end
   
-  if respond_to?(:private_constant)
-    private_constant :ConnectionSpecification 
-    private_constant :ConnectionHandler
-    private_constant :Adapter
-  end
+#  if respond_to?(:private_constant)
+#    private_constant :ConnectionSpecification 
+#    private_constant :ConnectionHandler
+#    private_constant :Adapter
+#  end
   
 end
