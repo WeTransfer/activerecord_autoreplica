@@ -33,7 +33,17 @@
 module AutoReplica
   # The first one is used in ActiveRecord 3+, the second one in 4+
   ConnectionSpecification = ActiveRecord::Base::ConnectionSpecification rescue ActiveRecord::ConnectionAdapters::ConnectionSpecification
-        
+
+  # Runs a given block with all SELECT statements being executed against the read slave
+  # database.
+  #
+  #     AutoReplica.using_read_replica_at(:adapter => 'mysql2', :datbase => 'read_replica', ...) do
+  #       customer = Customer.find(3) # Will SELECT from the replica database at the connection spec passed to the block
+  #       customer.register_complaint! # Will UPDATE to the master database connection
+  #     end
+  #
+  # @param replica_connection_spec_hash_or_url[String, Hash] an ActiveRecord connection specification or a DSN URL
+  # @return [void]
   def self.using_read_replica_at(replica_connection_spec_hash_or_url)
     return yield if @in_replica_context # This method should not be reentrant
     
@@ -60,8 +70,12 @@ module AutoReplica
     end
   end
   
-  # Resolve an ActiveRecord connection URL
+  # Resolve an ActiveRecord connection URL, from a string to a Hash.
+  #
+  # @param url_string[String] the connection URL (like `sqlite3://...`)
+  # @return [Hash] a symbol-keyed ActiveRecord connection specification
   def self.resolve_connection_url(url_string)
+    # TODO: privatize this method.
     if defined?(ActiveRecord::Base::ConnectionSpecification::Resolver) # AR3
       resolver = ActiveRecord::Base::ConnectionSpecification::Resolver.new(url_string, {})
       resolver.send(:connection_url_to_hash, url_string) # Because making this public was so hard
@@ -147,4 +161,11 @@ module AutoReplica
       @master_connection.public_send(method_name, *args, &blk)
     end
   end
+  
+  if respond_to?(:private_constant)
+    private_constant :ConnectionSpecification 
+    private_constant :ConnectionHandler
+    private_constant :Adapter
+  end
+  
 end

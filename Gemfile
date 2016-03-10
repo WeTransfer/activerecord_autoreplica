@@ -11,6 +11,7 @@ gem 'activerecord', "> 3.0"
 # Add dependencies to develop your gem here.
 # Include everything needed to run rake, tests, features, etc.
 group :development do
+  gem 'yard'
   gem 'sqlite3'
   gem "rspec", "~> 2.4"
   gem "rdoc", "~> 3.12"
