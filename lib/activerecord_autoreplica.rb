@@ -46,49 +46,64 @@ module AutoReplica
   # @return [void]
   def self.using_read_replica_at(replica_connection_spec_hash_or_url)
     return yield if @in_replica_context # This method should not be reentrant
-    
+
+    # Wrap the connection handler in our proxy
+    config = resolve_config(replica_connection_spec_hash_or_url)
+    @custom_handler ||= ConnectionHandler.new(
+      ActiveRecord::Base.connection_handler,
+      config
+    )
+
+    with_custom_connection_handler { yield }
+  end
+
+  class << self
+    private
+
+    def with_custom_connection_handler
+      begin
+        @in_replica_context = true
+        ActiveRecord::Base.connection_handler = @custom_handler
+        yield
+      ensure
+        ActiveRecord::Base.connection_handler = @custom_handler.original_handler
+        @custom_handler.release_connection
+        @in_replica_context = false
+      end
+    end
+
     # Resolve if there is a URL given
     # Duplicate the hash so that we can change it if we have to
     # (say by deleting :adapter)
-    config_hash = if replica_connection_spec_hash_or_url.is_a?(Hash)
-      replica_connection_spec_hash_or_url.dup
-    else
-      resolve_connection_url(replica_connection_spec_hash_or_url).dup
+    def resolve_config(spec)
+      if spec.is_a?(Hash)
+        spec.dup
+      else
+        resolve_connection_url(spec).dup
+      end
     end
-    
-    @in_replica_context = true
-    # Wrap the connection handler in our proxy
-    original_connection_handler = ActiveRecord::Base.connection_handler
-    custom_handler = ConnectionHandler.new(original_connection_handler, config_hash)
-    begin
-      ActiveRecord::Base.connection_handler = custom_handler
-      yield
-    ensure
-      ActiveRecord::Base.connection_handler = original_connection_handler
-      custom_handler.disconnect_read_pool!
-      @in_replica_context = false
-    end
-  end
-  
-  # Resolve an ActiveRecord connection URL, from a string to a Hash.
-  #
-  # @param url_string[String] the connection URL (like `sqlite3://...`)
-  # @return [Hash] a symbol-keyed ActiveRecord connection specification
-  def self.resolve_connection_url(url_string)
-    # TODO: privatize this method.
-    if defined?(ActiveRecord::Base::ConnectionSpecification::Resolver) # AR3
-      resolver = ActiveRecord::Base::ConnectionSpecification::Resolver.new(url_string, {})
-      resolver.send(:connection_url_to_hash, url_string) # Because making this public was so hard
-    else  # AR4
-      resolved = ActiveRecord::ConnectionAdapters::ConnectionSpecification::ConnectionUrlResolver.new(url_string).to_hash
-      resolved["database"].gsub!(/^\//, '') # which is not done by the resolver
-      resolved.symbolize_keys # which is also not done by the resolver
+
+    # Resolve an ActiveRecord connection URL, from a string to a Hash.
+    #
+    # @param url_string[String] the connection URL (like `sqlite3://...`)
+    # @return [Hash] a symbol-keyed ActiveRecord connection specification
+    def resolve_connection_url(url_string)
+      if defined?(ActiveRecord::Base::ConnectionSpecification::Resolver) # AR3
+        resolver = ActiveRecord::Base::ConnectionSpecification::Resolver.new(url_string, {})
+        resolver.send(:connection_url_to_hash, url_string) # Because making this public was so hard
+      else  # AR4
+        resolved = ActiveRecord::ConnectionAdapters::ConnectionSpecification::ConnectionUrlResolver.new(url_string).to_hash
+        resolved["database"].gsub!(/^\//, '') # which is not done by the resolver
+        resolved.symbolize_keys # which is also not done by the resolver
+      end
     end
   end
-  
+
   # The connection handler that wraps the ActiveRecord one. Everything gets forwarded to the wrapped
   # object, but a "spiked" connection adapter gets returned from retrieve_connection.
   class ConnectionHandler # a proxy for ActiveRecord::ConnectionAdapters::ConnectionHandler
+    attr_reader :original_handler
+
     def initialize(original_handler, connection_specification_hash)
       @original_handler = original_handler
       # We need to maintain our own pool for read replica connections,
@@ -97,7 +112,7 @@ module AutoReplica
       connection_specification = ConnectionSpecification.new(connection_specification_hash, adapter_method)
       @read_pool = ActiveRecord::ConnectionAdapters::ConnectionPool.new(connection_specification)
     end
-    
+
     # Overridden method which gets called by ActiveRecord to get a connection related to a specific
     # ActiveRecord::Base subclass.
     def retrieve_connection(for_ar_class)
@@ -105,18 +120,22 @@ module AutoReplica
       connection_for_reads = @read_pool.connection
       Adapter.new(connection_for_writes, connection_for_reads)
     end
-    
+
     # Close all the connections maintained by the read pool
     def disconnect_read_pool!
       @read_pool.disconnect!
     end
-    
+
     # Disconnect both the original handler AND the read pool
     def clear_all_connections!
       disconnect_read_pool!
       @original_handler.clear_all_connections!
     end
-    
+
+    def release_connection
+      @read_pool.release_connection
+    end
+
     # The duo for method proxying without delegate
     def respond_to_missing?(method_name)
       @original_handler.respond_to?(method_name)
@@ -138,7 +157,7 @@ module AutoReplica
       @master_connection = master_connection_adapter
       @read_connection = replica_connection_adapter
     end
-  
+
     # Under the hood, ActiveRecord uses methods for the most common database statements
     # like "select_all", "select_one", "select_value" and so on. Those can be overridden by concrete
     # connection adapters, but in the basic abstract Adapter they get included from
@@ -152,7 +171,7 @@ module AutoReplica
         @read_connection.send(select_method_name, *method_arguments)
       end
     end
-    
+
     # The duo for method proxying without delegate
     def respond_to_missing?(method_name)
       @master_connection.respond_to?(method_name)
@@ -161,11 +180,11 @@ module AutoReplica
       @master_connection.public_send(method_name, *args, &blk)
     end
   end
-  
+
 #  if respond_to?(:private_constant)
-#    private_constant :ConnectionSpecification 
+#    private_constant :ConnectionSpecification
 #    private_constant :ConnectionHandler
 #    private_constant :Adapter
 #  end
-  
+
 end
