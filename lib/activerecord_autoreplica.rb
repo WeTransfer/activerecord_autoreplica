@@ -32,7 +32,11 @@
 # Once the block exits, the original connection handler is reassigned to the AR connection_pool.
 module AutoReplica
   # The first one is used in ActiveRecord 3+, the second one in 4+
-  ConnectionSpecification = ActiveRecord::Base::ConnectionSpecification rescue ActiveRecord::ConnectionAdapters::ConnectionSpecification
+  ConnectionSpecification = begin
+    ActiveRecord::Base::ConnectionSpecification
+  rescue
+    ActiveRecord::ConnectionAdapters::ConnectionSpecification
+  end
 
   # Runs a given block with all SELECT statements being executed against the read slave
   # database.
@@ -94,7 +98,11 @@ module AutoReplica
       # We need to maintain our own pool for read replica connections,
       # aside from the one managed by Rails proper.
       adapter_method = "%s_connection" % connection_specification_hash[:adapter]
-      connection_specification = ConnectionSpecification.new(connection_specification_hash, adapter_method)
+      connection_specification = begin
+        ConnectionSpecification.new('autoreplica', connection_specification_hash, adapter_method)
+      rescue ArgumentError # AR 4 and lower wants 2 arguments
+        ConnectionSpecification.new(connection_specification_hash, adapter_method)
+      end
       @read_pool = ActiveRecord::ConnectionAdapters::ConnectionPool.new(connection_specification)
     end
     

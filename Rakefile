@@ -13,7 +13,7 @@ require 'rake'
 
 require 'jeweler'
 Jeweler::Tasks.new do |gem|
-  gem.version = '1.1.0'
+  gem.version = '1.2.0'
   # gem is a Gem::Specification... see http://guides.rubygems.org/specification-reference/ for more options
   gem.name = "activerecord_autoreplica"
   gem.homepage = "http://github.com/WeTransfer/activerecord_autoreplica"

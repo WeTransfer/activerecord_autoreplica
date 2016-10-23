@@ -66,10 +66,12 @@ files are going to be erased on test completion.
 
 There are Gemfiles for testing against various versions of ActiveRecord. To run those, use:
 
+    $ BUNDLE_GEMFILE=gemfiles/Gemfile.rails-5.0.x bundle exec rake
     $ BUNDLE_GEMFILE=gemfiles/Gemfile.rails-4.1.x bundle exec rake
     $ BUNDLE_GEMFILE=gemfiles/Gemfile.rails-3.2.x bundle exec rake
 
-The library contains a couple of switches that allow it to function in both Rails versions.
+The library contains a couple of switches that allow it to function in all these Rails versions.
+Rails 3.x support is likely to be dropped in the next major version.
 
 ### Versioning
 
