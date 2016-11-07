@@ -56,9 +56,8 @@ module AutoReplica
   # connection pool.
   #
   #     read_pool = ActiveRecord::ConnectionAdapters::ConnectionPool.new(:adapter => 'mysql2', :database => 'read_replica', ...)
-  #
-  #     AutoReplica.using_read_replica_pool(:adapter => 'mysql2', :database => 'read_replica', ...) do
-  #       customer = Customer.find(3) # Will SELECT from the replica database at the connection spec passed to the block
+  #     AutoReplica.using_read_replica_pool(read_pool) do
+  #       customer = Customer.find(3) # Will SELECT from the replica database picked off the read pool
   #       customer.register_complaint! # Will UPDATE to the master database connection
   #     end
   #
