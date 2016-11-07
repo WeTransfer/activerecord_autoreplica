@@ -17,7 +17,9 @@ The only dependency is ActiveRecord itself.
 
 ### Usage
 
-The API consists of _one_ method. Pass it a complete ActiveRecord connection specificaton hash, and
+There are two options.
+
+The first is to pass a complete ActiveRecord connection specificaton hash, and
 everything within the block is going to use the read slave connections when performing standard
 ActiveRecord `SELECT` queries (not the hand-written ones).
 
@@ -27,11 +29,21 @@ ActiveRecord `SELECT` queries (not the hand-written ones).
     end
 
 Connection strings (URLs) are also supported, just like in ActiveRecord itself:
-  
+
     AutoReplica.using_read_replica_at('sqlite3:/replica_db_145.sqlite3') do
       ...
     end
-  
+
+Note that this will create and disconnect a ConnectionPool each time the block is called.
+
+The other option is to create the ConnectionPool yourself, and pass it to `using_read_replica_pool`:
+
+    AutoReplica.using_read_replica_pool(my_connection_pool) do
+      ...
+    end
+
+This will release connections to the pool at the end of the block, but not close them.
+
 To use in Rails controller context (for all actions of this controller):
 
     class SlowDataReportsController < ApplicationController
@@ -56,7 +68,7 @@ act accordingly.
 
 The `using_read_replica_at` block will allocate a `ConnectionPool` like the standard `ActiveRecord` connection
 manager does, and the pool is going to be closed and torn down at the end of the block. Since it only uses the basic
-ActiveRecord facilities (including mutexes) it should be threadsafe (but _not_ thread-local since the connection 
+ActiveRecord facilities (including mutexes) it should be threadsafe (but _not_ thread-local since the connection
 handler in ActiveRecord isn't).
 
 ### Running the specs
@@ -78,7 +90,7 @@ Rails 3.x support is likely to be dropped in the next major version.
 The gem version is specified in the Rakefile.
 
 ### Contributing to activerecord_autoreplica
- 
+
 * Check out the latest master to make sure the feature hasn't been implemented or the bug hasn't been fixed yet.
 * Check out the issue tracker to make sure someone already hasn't requested it and/or contributed it.
 * Fork the project.
