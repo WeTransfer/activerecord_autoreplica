@@ -5,12 +5,12 @@ describe AutoReplica do
 
   before :all do
     test_seed_name = SecureRandom.hex(4)
-    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ('master_db_%s.sqlite3' % test_seed_name))
+    ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ('master_db_%s.sqlite3' % test_seed_name), pool: 10)
 
     # Setup the master and replica connections
     @master_connection_config = ActiveRecord::Base.connection_config.dup
-    @replica_connection_config = @master_connection_config.merge(database: ('replica_db_%s.sqlite3' % test_seed_name))
-    @replica_connection_config_url = 'sqlite3:/replica_db_%s.sqlite3' % test_seed_name
+    @replica_connection_config = @master_connection_config.merge(database: ('replica_db_%s.sqlite3' % test_seed_name), pool: 10)
+    @replica_connection_config_url = 'sqlite3:/replica_db_%s.sqlite3?pool=10' % test_seed_name
 
     ActiveRecord::Migration.suppress_messages do
       # Create both the master and the replica, with a simple small schema
@@ -97,6 +97,73 @@ describe AutoReplica do
       found_on_master = TestThing.find(id)
       expect(found_on_master.description).to eq('A nice Thing in the master database')
     end
+    
+    it 'does not contaminate other threads with the replica connection' do
+      ActiveRecord::Base.establish_connection(@master_connection_config)
+      TestThing.create! description: 'In master'
+
+      ActiveRecord::Base.establish_connection(@replica_connection_config)
+      TestThing.create! description: 'In replica'
+
+      ActiveRecord::Base.establish_connection(@master_connection_config)
+      expect(TestThing.first.description).to eq('In master')
+
+      ActiveRecord::Base.establish_connection(@replica_connection_config)
+      expect(TestThing.first.description).to eq('In replica')
+
+      ActiveRecord::Base.establish_connection(@master_connection_config)
+      
+      Thread.abort_on_exception = true
+      failures = 0
+      successes = 0
+      lock = Mutex.new
+      
+      n_threads = 4
+      n_iterations = 68
+      readers_from_slave = (1..4).map do |n|
+        Thread.new do
+          n_iterations.times do
+            sleep(rand / 3.0)
+            described_class.using_read_replica_at(**@replica_connection_config) do
+              description = TestThing.first.description
+              lock.synchronize do
+                if description == 'In replica'
+                  successes += 1
+                else
+                  failures += 1
+                end
+              end
+            end
+          end
+        end
+      end
+
+      readers_from_master = (1..n_threads).map do |n|
+        Thread.new do
+          n_iterations.times do
+            sleep(rand / 3.0)
+            description = TestThing.first.description
+            lock.synchronize do
+              if description == 'In master'
+                successes += 1
+              else
+                failures += 1
+              end
+            end
+          end
+        end
+      end
+      
+      readers_from_slave.map(&:join)
+      readers_from_master.map(&:join)
+
+      # All the fetches should be correct
+      expect(successes).not_to be_zero
+
+      # There should be no fetches from master in the replica block, and no fetches
+      # from replica without the replica block
+      expect(failures).to be_zero
+    end
   end
 
   describe AutoReplica::ConnectionHandler do
@@ -108,7 +175,8 @@ describe AutoReplica do
       expect(subject.do_that_thing).to eq(:yes)
     end
 
-    it 'enhances connection_for and returns an instance of the Adapter' do
+    it 'enhances connection_for and returns an instance of the Adapter if the thread-local :autoreplica is set' do
+      Thread.current[:autoreplica] = true
       original_handler = double('ActiveRecord_ConnectionHandler')
       adapter_double = double('ActiveRecord_Adapter')
       connection_double = double('Connection')
@@ -119,8 +187,19 @@ describe AutoReplica do
       subject = AutoReplica::ConnectionHandler.new(original_handler, pool_double)
       connection = subject.retrieve_connection(TestThing)
       expect(connection).to be_kind_of(AutoReplica::Adapter)
+      Thread.current[:autoreplica] = false
     end
 
+    it 'returns the original connection without the wrapper if the thread-local :autoreplica is not set' do
+      Thread.current[:autoreplica] = false
+      original_handler = double('ActiveRecord_ConnectionHandler')
+      pool_double = double('Read replica pool')
+      expect(original_handler).to receive(:retrieve_connection).and_return(:original_connection)
+      subject = AutoReplica::ConnectionHandler.new(original_handler, pool_double)
+      connection = subject.retrieve_connection(TestThing)
+      expect(connection).to eq(:original_connection)
+    end
+    
     it 'releases the the read pool connection when finishing' do
       original_handler = double('ActiveRecord_ConnectionHandler')
       pool_double = double('ConnectionPool')
@@ -158,7 +237,8 @@ describe AutoReplica do
       expect(subject.do_that_thing).to eq(:yes)
     end
 
-    it 'enhances connection_for and returns an instance of the Adapter' do
+    it 'enhances connection_for and returns an instance of the Adapter if the thread-local :autoreplica is set' do
+      Thread.current[:autoreplica] = true
       original_handler = double('ActiveRecord_ConnectionHandler')
       adapter_double = double('ActiveRecord_Adapter')
       expect(original_handler).to receive(:retrieve_connection).with(TestThing) { adapter_double }
@@ -166,6 +246,7 @@ describe AutoReplica do
       subject = AutoReplica::AdHocConnectionHandler.new(original_handler, @replica_connection_config)
       connection = subject.retrieve_connection(TestThing)
       expect(connection).to be_kind_of(AutoReplica::Adapter)
+      Thread.current[:autoreplica] = false
     end
 
     it 'disconnects the read pool when finishing' do
