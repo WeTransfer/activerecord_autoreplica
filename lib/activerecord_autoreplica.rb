@@ -31,6 +31,8 @@
 #
 # Once the block exits, the original connection handler is reassigned to the AR connection_pool.
 module AutoReplica
+  CONNECTION_SWITCHING_MUTEX = Mutex.new
+  
   # The first one is used in ActiveRecord 3+, the second one in 4+
   ConnectionSpecification = begin
     ActiveRecord::Base::ConnectionSpecification
@@ -68,19 +70,22 @@ module AutoReplica
   end
 
   def self.in_replica_context(handler_params, handler_class=ConnectionHandler)
-    return yield if @in_replica_context # This method should not be reentrant
-
-    @in_replica_context = true
+    return yield if Thread.current[:autoreplica] # This method should not be reentrant
 
     original_connection_handler = ActiveRecord::Base.connection_handler
     custom_handler = handler_class.new(original_connection_handler, handler_params)
     begin
-      ActiveRecord::Base.connection_handler = custom_handler
+      CONNECTION_SWITCHING_MUTEX.synchronize do
+        Thread.current[:autoreplica] = true
+        ActiveRecord::Base.connection_handler = custom_handler
+      end
       yield
     ensure
-      ActiveRecord::Base.connection_handler = original_connection_handler
+      CONNECTION_SWITCHING_MUTEX.synchronize do
+        Thread.current[:autoreplica] = false
+        ActiveRecord::Base.connection_handler = original_connection_handler
+      end
       custom_handler.finish
-      @in_replica_context = false
     end
   end
 
@@ -95,9 +100,16 @@ module AutoReplica
     # Overridden method which gets called by ActiveRecord to get a connection related to a specific
     # ActiveRecord::Base subclass.
     def retrieve_connection(for_ar_class)
-      connection_for_writes = @original_handler.retrieve_connection(for_ar_class)
-      connection_for_reads = @read_pool.connection
-      Adapter.new(connection_for_writes, connection_for_reads)
+      # See which thread is calling us. If it is the thread that initiated the `in_replica_context`
+      # block, we return a wrapper proxy. If it is not, then it is a different thread willing to
+      # use a connection, and we have to give it the original adapter instead
+      if Thread.current[:autoreplica]
+        connection_for_writes = @original_handler.retrieve_connection(for_ar_class)
+        connection_for_reads = @read_pool.connection
+        Adapter.new(connection_for_writes, connection_for_reads)
+      else
+        @original_handler.retrieve_connection(for_ar_class)
+      end
     end
 
     def release_read_pool_connection
