@@ -68,8 +68,7 @@ act accordingly.
 
 The `using_read_replica_at` block will allocate a `ConnectionPool` like the standard `ActiveRecord` connection
 manager does, and the pool is going to be closed and torn down at the end of the block. Since it only uses the basic
-ActiveRecord facilities (including mutexes) it should be threadsafe (but _not_ thread-local since the connection
-handler in ActiveRecord isn't).
+ActiveRecord facilities (including mutexes). It should be threadsafe _and_ thread local.
 
 ### Running the specs
 
