@@ -105,7 +105,7 @@ module AutoReplica
       self.current_read_pool = read_pool
       yield
     ensure
-      custom_handler.finish_read_context
+      current_read_pool.release_connection
       clear_current_read_pool
     end
   end
@@ -172,10 +172,6 @@ module AutoReplica
       end
     end
 
-    def release_read_pool_connection
-      AutoReplica.current_read_pool.release_connection
-    end
-
     # Close all the connections maintained by the read pool
     def disconnect_read_pool!
       AutoReplica.current_read_pool.disconnect!
@@ -193,11 +189,6 @@ module AutoReplica
     end
     def method_missing(method_name, *args, &blk)
       @original_handler.public_send(method_name, *args, &blk)
-    end
-
-    # When finishing, releases the borrowed connection back into the pool
-    def finish_read_context
-      release_read_pool_connection
     end
   end
 

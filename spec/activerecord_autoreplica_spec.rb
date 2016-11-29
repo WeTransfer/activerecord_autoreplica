@@ -168,6 +168,15 @@ describe AutoReplica do
     end
   end
 
+  describe 'in_replica_context' do
+    it 'releases the connection to the pool' do
+      pool_double = double('ConnectionPool')
+
+      expect(pool_double).to receive(:release_connection)
+      AutoReplica.in_replica_context(pool_double) { }
+    end
+  end
+
   describe AutoReplica::ConnectionHandler do
     it 'proxies all methods' do
       original_handler = double('ActiveRecord_ConnectionHandler')
@@ -201,27 +210,6 @@ describe AutoReplica do
       AutoReplica.clear_current_read_pool
       connection = subject.retrieve_connection(TestThing)
       expect(connection).to eq(:original_connection)
-    end
-
-    it 'releases the the read pool connection when finishing' do
-      original_handler = double('ActiveRecord_ConnectionHandler')
-      pool_double = double('ConnectionPool')
-      subject = AutoReplica::ConnectionHandler.new(original_handler)
-      AutoReplica.current_read_pool = pool_double
-      expect(pool_double).to receive(:release_connection)
-      subject.finish_read_context
-    end
-
-    it 'performs clear_all_connections! both on the contained handler and on the read pool' do
-      original_handler = double('ActiveRecord_ConnectionHandler')
-      pool_double = double('ConnectionPool')
-
-      expect(original_handler).to receive(:clear_all_connections!)
-      expect(pool_double).to receive(:disconnect!)
-
-      subject = AutoReplica::ConnectionHandler.new(original_handler)
-      AutoReplica.current_read_pool = pool_double
-      subject.clear_all_connections!
     end
   end
 
