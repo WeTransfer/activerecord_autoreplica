@@ -31,13 +31,27 @@
 #
 # Once the block exits, the original connection handler is reassigned to the AR connection_pool.
 module AutoReplica
-  CONNECTION_SWITCHING_MUTEX = Mutex.new
-  
+
   # The first one is used in ActiveRecord 3+, the second one in 4+
   ConnectionSpecification = begin
     ActiveRecord::Base::ConnectionSpecification
   rescue
     ActiveRecord::ConnectionAdapters::ConnectionSpecification
+  end
+
+  def self.connection_set_up?; @connection_set_up; end
+  def self.connection_set_up!; @connection_set_up = true; end
+
+  def self.current_read_pool
+    Thread.current[:autoreplica_read_pool]
+  end
+
+  def self.current_read_pool=(pool)
+    Thread.current[:autoreplica_read_pool] = pool
+  end
+
+  def self.clear_current_read_pool
+    Thread.current[:autoreplica_read_pool] = nil
   end
 
   # Runs a given block with all SELECT statements being executed against the read slave
@@ -51,7 +65,12 @@ module AutoReplica
   # @param replica_connection_spec_hash_or_url[String, Hash] an ActiveRecord connection specification or a DSN URL
   # @return [void]
   def self.using_read_replica_at(replica_connection_spec_hash_or_url)
-    in_replica_context(replica_connection_spec_hash_or_url, AdHocConnectionHandler){ yield }
+    read_pool = get_pool(replica_connection_spec_hash_or_url)
+    begin
+      in_replica_context(read_pool){ yield }
+    ensure
+      read_pool.disconnect!
+    end
   end
 
   # Runs a given block with all SELECT statements being executed using the read slave
@@ -69,81 +88,29 @@ module AutoReplica
     in_replica_context(replica_connection_pool){ yield }
   end
 
-  def self.in_replica_context(handler_params, handler_class=ConnectionHandler)
-    return yield if Thread.current[:autoreplica] # This method should not be reentrant
+  def self.in_replica_context(read_pool)
+    return yield if current_read_pool # This method should not be reentrant
 
-    original_connection_handler = ActiveRecord::Base.connection_handler
-    custom_handler = handler_class.new(original_connection_handler, handler_params)
+    # There is a pontential race condition here in a threaded environment, but
+    # in the worst case the handler will be set up twice. This shouldn't affect
+    # operations.
+    unless connection_set_up?
+      original_connection_handler = ActiveRecord::Base.connection_handler
+      custom_handler = AutoReplica::ConnectionHandler.new(original_connection_handler)
+      ActiveRecord::Base.connection_handler = custom_handler
+      connection_set_up!
+    end
+
     begin
-      CONNECTION_SWITCHING_MUTEX.synchronize do
-        Thread.current[:autoreplica] = true
-        ActiveRecord::Base.connection_handler = custom_handler
-      end
+      self.current_read_pool = read_pool
       yield
     ensure
-      CONNECTION_SWITCHING_MUTEX.synchronize do
-        Thread.current[:autoreplica] = false
-        ActiveRecord::Base.connection_handler = original_connection_handler
-      end
-      custom_handler.finish
+      current_read_pool.release_connection
+      clear_current_read_pool
     end
   end
 
-  # The connection handler that wraps the ActiveRecord one. Everything gets forwarded to the wrapped
-  # object, but a "spiked" connection adapter gets returned from retrieve_connection.
-  class ConnectionHandler # a proxy for ActiveRecord::ConnectionAdapters::ConnectionHandler
-    def initialize(original_handler, read_pool)
-      @original_handler = original_handler
-      @read_pool = read_pool
-    end
-
-    # Overridden method which gets called by ActiveRecord to get a connection related to a specific
-    # ActiveRecord::Base subclass.
-    def retrieve_connection(for_ar_class)
-      # See which thread is calling us. If it is the thread that initiated the `in_replica_context`
-      # block, we return a wrapper proxy. If it is not, then it is a different thread willing to
-      # use a connection, and we have to give it the original adapter instead
-      if Thread.current[:autoreplica]
-        connection_for_writes = @original_handler.retrieve_connection(for_ar_class)
-        connection_for_reads = @read_pool.connection
-        Adapter.new(connection_for_writes, connection_for_reads)
-      else
-        @original_handler.retrieve_connection(for_ar_class)
-      end
-    end
-
-    def release_read_pool_connection
-      @read_pool.release_connection
-    end
-
-    # Close all the connections maintained by the read pool
-    def disconnect_read_pool!
-      @read_pool.disconnect!
-    end
-
-    # Disconnect both the original handler AND the read pool
-    def clear_all_connections!
-      disconnect_read_pool!
-      @original_handler.clear_all_connections!
-    end
-
-    # The duo for method proxying without delegate
-    def respond_to_missing?(method_name)
-      @original_handler.respond_to?(method_name)
-    end
-    def method_missing(method_name, *args, &blk)
-      @original_handler.public_send(method_name, *args, &blk)
-    end
-
-    # When finishing, releases the borrowed connection back into the pool
-    def finish
-      release_read_pool_connection
-    end
-  end
-
-  # A connection handler that creates an ad-hoc read connection pool, and disconnects it when finishing
-  class AdHocConnectionHandler < ConnectionHandler
-    def initialize(original_handler, replica_connection_spec_hash_or_url)
+  def self.get_pool(replica_connection_spec_hash_or_url)
       connection_specification_hash = parse_params(replica_connection_spec_hash_or_url)
       # We need to maintain our own pool for read replica connections,
       # aside from the one managed by Rails proper.
@@ -153,11 +120,10 @@ module AutoReplica
       rescue ArgumentError # AR 4 and lower wants 2 arguments
         ConnectionSpecification.new(connection_specification_hash, adapter_method)
       end
-      read_pool = ActiveRecord::ConnectionAdapters::ConnectionPool.new(connection_specification)
-      super(original_handler, read_pool)
+      ActiveRecord::ConnectionAdapters::ConnectionPool.new(connection_specification)
     end
 
-    def parse_params(replica_connection_spec_hash_or_url)
+    def self.parse_params(replica_connection_spec_hash_or_url)
       # Resolve if there is a URL given
       # Duplicate the hash so that we can change it if we have to
       # (say by deleting :adapter)
@@ -172,7 +138,7 @@ module AutoReplica
     #
     # @param url_string[String] the connection URL (like `sqlite3://...`)
     # @return [Hash] a symbol-keyed ActiveRecord connection specification
-    def resolve_connection_url(url_string)
+    def self.resolve_connection_url(url_string)
       # TODO: privatize this method.
       if defined?(ActiveRecord::Base::ConnectionSpecification::Resolver) # AR3
         resolver = ActiveRecord::Base::ConnectionSpecification::Resolver.new(url_string, {})
@@ -184,9 +150,45 @@ module AutoReplica
       end
     end
 
-    # Disconnect all read pool connections, making the pool ready to be disposed.
-    def finish
+  # The connection handler that wraps the ActiveRecord one. Everything gets forwarded to the wrapped
+  # object, but a "spiked" connection adapter gets returned from retrieve_connection.
+  class ConnectionHandler # a proxy for ActiveRecord::ConnectionAdapters::ConnectionHandler
+    def initialize(original_handler)
+      @original_handler = original_handler
+    end
+
+    # Overridden method which gets called by ActiveRecord to get a connection related to a specific
+    # ActiveRecord::Base subclass.
+    def retrieve_connection(for_ar_class)
+      # See which thread is calling us. If it is the thread that initiated the `in_replica_context`
+      # block, we return a wrapper proxy. If it is not, then it is a different thread willing to
+      # use a connection, and we have to give it the original adapter instead
+      if read_pool = AutoReplica.current_read_pool
+        connection_for_writes = @original_handler.retrieve_connection(for_ar_class)
+        connection_for_reads = read_pool.connection
+        Adapter.new(connection_for_writes, connection_for_reads)
+      else
+        @original_handler.retrieve_connection(for_ar_class)
+      end
+    end
+
+    # Close all the connections maintained by the read pool
+    def disconnect_read_pool!
+      AutoReplica.current_read_pool.disconnect!
+    end
+
+    # Disconnect both the original handler AND the read pool
+    def clear_all_connections!
       disconnect_read_pool!
+      @original_handler.clear_all_connections!
+    end
+
+    # The duo for method proxying without delegate
+    def respond_to_missing?(method_name)
+      @original_handler.respond_to?(method_name)
+    end
+    def method_missing(method_name, *args, &blk)
+      @original_handler.public_send(method_name, *args, &blk)
     end
   end
 
