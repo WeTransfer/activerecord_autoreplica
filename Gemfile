@@ -6,7 +6,7 @@ source "http://rubygems.org"
 #   $ BUNDLE_GEMFILE=gemfiles/Gemfile.rails-4.1.x bundle exec rake
 #
 # etc.
-gem 'activerecord', "> 3.0"
+gem 'activerecord', ">= 4"
 
 # Add dependencies to develop your gem here.
 # Include everything needed to run rake, tests, features, etc.
