@@ -76,14 +76,19 @@ module AutoReplica
     custom_handler = handler_class.new(original_connection_handler, handler_params)
     begin
       CONNECTION_SWITCHING_MUTEX.synchronize do
-        Thread.current[:autoreplica] = true
-        ActiveRecord::Base.connection_handler = custom_handler
+        autoreplica_enabled = Thread.current[:autoreplica]
+        unless autoreplica_enabled
+          Thread.current[:autoreplica] = true
+          ActiveRecord::Base.connection_handler = custom_handler
+        end
       end
       yield
     ensure
       CONNECTION_SWITCHING_MUTEX.synchronize do
-        Thread.current[:autoreplica] = false
-        ActiveRecord::Base.connection_handler = original_connection_handler
+        unless autoreplica_enabled
+          Thread.current[:autoreplica] = false
+          ActiveRecord::Base.connection_handler = original_connection_handler
+        end
       end
       custom_handler.finish
     end
