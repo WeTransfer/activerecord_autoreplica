@@ -25,7 +25,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency('rake', ["~> 10.0"])
   s.add_development_dependency('yard', [">= 0"])
   s.add_development_dependency('sqlite3', [">= 0"])
-  s.add_development_dependency('rspec', ["~> 2.4"])
+  s.add_development_dependency('rspec', ["~> 3.8"])
   s.add_development_dependency('rdoc', ["~> 3.12"])
   s.add_development_dependency('bundler', ["~> 1.0"])
 end
