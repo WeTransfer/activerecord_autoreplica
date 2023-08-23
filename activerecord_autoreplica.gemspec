@@ -21,7 +21,7 @@ Gem::Specification.new do |s|
   end
 
   s.specification_version = 4
-  s.add_runtime_dependency('activerecord', [">= 4"])
+  s.add_runtime_dependency('activerecord', ["7.0.7.2"])
   s.add_development_dependency('rake', ["~> 12.3"])
   s.add_development_dependency('yard', [">= 0"])
   s.add_development_dependency('sqlite3', [">= 0"])
